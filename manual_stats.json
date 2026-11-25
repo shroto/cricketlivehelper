@@ -1,0 +1,12 @@
+{
+  "_help": "Add one block per player. The key is the name as it arrives (like SR Tendulkar) or a new name for a player who is missing. For each format you add (Test, ODI, T20I, IPL) your numbers REPLACE the computed ones for that format. Leave out bat or bowl if the player has none. Write overs as text, like \"4240.1\" (4240 overs and 1 ball), or give balls. Best bowling is like \"5/20\". High score uses a star for not out, like \"200*\". Delete this _example block or leave it: names starting with _ are ignored.",
+  "_example": {
+    "name": "Full Player Name",
+    "team": "India",
+    "ODI": {
+      "matches": 100,
+      "bat": { "inns": 90, "runs": 3000, "balls": 3500, "outs": 80, "hs": "120*", "fours": 300, "sixes": 20, "fifties": 20, "hundreds": 5, "ducks": 4 },
+      "bowl": { "inns": 50, "overs": "400.2", "runs": 1800, "wkts": 60, "mdns": 10, "best": "4/25", "fivers": 0 }
+    }
+  }
+}

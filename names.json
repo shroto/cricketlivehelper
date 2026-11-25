@@ -1,0 +1,21 @@
+{
+  "_help": "Left side: the name as it arrives (like V Kohli). Right side: the name you want to show. Add one line per player. Keep a comma after every line except the last.",
+  "V Kohli": "Virat Kohli",
+  "MS Dhoni": "Mahendra Singh Dhoni",
+  "RG Sharma": "Rohit Sharma",
+  "JJ Bumrah": "Jasprit Bumrah",
+  "SR Tendulkar": "Sachin Tendulkar",
+  "RA Jadeja": "Ravindra Jadeja",
+  "R Ashwin": "Ravichandran Ashwin",
+  "HH Pandya": "Hardik Pandya",
+  "SA Yadav": "Suryakumar Yadav",
+  "RR Pant": "Rishabh Pant",
+  "SPD Smith": "Steve Smith",
+  "DA Warner": "David Warner",
+  "PJ Cummins": "Pat Cummins",
+  "MA Starc": "Mitchell Starc",
+  "JE Root": "Joe Root",
+  "BA Stokes": "Ben Stokes",
+  "JC Buttler": "Jos Buttler",
+  "KS Williamson": "Kane Williamson"
+}
