@@ -147,13 +147,19 @@ def process_match(match, fmt, players):
             continue
         bat, bowl, overs, dism = {}, {}, {}, {}
         tot_runs = tot_wkts = tot_balls = 0   # the innings total, for the match archive
+        fow = []
         for over in inn.get("overs", []):
+            ob = 0
             for d in over.get("deliveries", []):
                 d_ext = d.get("extras", {})
                 tot_runs += d.get("runs", {}).get("total", 0)
                 if "wides" not in d_ext and "noballs" not in d_ext:
                     tot_balls += 1
-                tot_wkts += sum(1 for k in d.get("wickets", []) if k.get("kind") not in NOT_OUT_KINDS)
+                    ob += 1
+                for k in d.get("wickets", []):
+                    if k.get("kind") not in NOT_OUT_KINDS:
+                        tot_wkts += 1
+                        fow.append([tot_wkts, tot_runs, f"{over.get('over', 0)}.{ob}", k.get("player_out", "")])
                 batter = people.get(d.get("batter"))
                 bowler = people.get(d.get("bowler"))
                 if not batter or not bowler:
@@ -205,7 +211,8 @@ def process_match(match, fmt, players):
                 continue
             mdn = sum(1 for (bid, _), (r, n) in overs.items() if bid == pid and n >= 6 and r == 0)
             sc_bowl.append([names.get(pid, ""), w["balls"], mdn, w["runs"], w["wkts"]])
-        sc_inns.append([inn.get("team", ""), sc_bat, sc_bowl])
+        fow = [[n, r, o, names.get(people.get(p), p)] for n, r, o, p in fow]
+        sc_inns.append([inn.get("team", ""), sc_bat, sc_bowl, fow])
         for pid, b in bat.items():
             p = get_player(players, pid, names.get(pid, ""))
             s = p["bat"].setdefault(fmt, new_bat())
