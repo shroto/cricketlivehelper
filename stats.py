@@ -7,6 +7,7 @@ and writes players.json. It uses only Python's standard library.
 """
 import io
 import json
+import os
 import sys
 import urllib.request
 import zipfile
@@ -19,6 +20,9 @@ SOURCES = {
     "IPL": "https://cricsheet.org/downloads/ipl_json.zip",
 }
 OUT_FILE = "players.json"
+MATCHES = []    # one short record for every match, saved by year in the matches/ folder
+MATCH_DIR = "matches"
+COVERAGE = {}   # per format: how many matches were read, and the first and last match dates
 MANUAL_FILE = "manual_stats.json"   # career totals you type in by hand
 NAMES_FILE = "names.json"   # your own corrections, e.g. "V Kohli": "Virat Kohli"
 
@@ -46,10 +50,61 @@ def get_player(players, pid, name):
     return p
 
 
+def result_text(info):
+    """A short result line, like "India won by 5 wickets" or "Match drawn"."""
+    o = info.get("outcome") or {}
+    winner = o.get("winner")
+    by = o.get("by") or {}
+    method = o.get("method")
+    if winner:
+        if "innings" in by:
+            txt = f"{winner} won by an innings and {by.get('runs', 0)} runs"
+        elif "runs" in by:
+            txt = f"{winner} won by {by['runs']} run{'s' if by['runs'] != 1 else ''}"
+        elif "wickets" in by:
+            txt = f"{winner} won by {by['wickets']} wicket{'s' if by['wickets'] != 1 else ''}"
+        else:
+            txt = f"{winner} won"
+        return txt + (f" ({method})" if method else "")
+    if o.get("eliminator"):
+        return f"Match tied, {o['eliminator']} won the super over"
+    res = o.get("result")
+    if res == "tie":
+        return "Match tied"
+    if res == "draw":
+        return "Match drawn"
+    if res == "no result":
+        return "No result"
+    return res or ""
+
+
 def process_match(match, fmt, players):
     info = match.get("info", {})
     people = info.get("registry", {}).get("people", {})
     date = (info.get("dates") or [""])[0]
+    c = COVERAGE.setdefault(fmt, {"matches": 0, "first": "", "last": ""})
+    c["matches"] += 1
+    if date:
+        if not c["first"] or date < c["first"]:
+            c["first"] = date
+        if date > c["last"]:
+            c["last"] = date
+
+    # one short record for the match archive
+    ev = info.get("event") or {}
+    toss = info.get("toss") or {}
+    rec = {"d": date, "f": fmt, "t": info.get("teams", []), "v": info.get("venue", ""), "c": info.get("city", ""),
+           "r": result_text(info), "i": []}
+    win = (info.get("outcome") or {}).get("winner") or (info.get("outcome") or {}).get("eliminator")
+    if win:
+        rec["w"] = win
+    if info.get("player_of_match"):
+        rec["p"] = info["player_of_match"][:2]
+    if ev.get("name"):
+        rec["e"] = ev["name"] + (f", match {ev['match_number']}" if ev.get("match_number") else "")
+    if toss.get("winner"):
+        rec["o"] = f"{toss['winner']} won the toss and chose to {toss.get('decision', 'bat')}"
+    MATCHES.append(rec)
 
     # Matches played
     for team, names in info.get("players", {}).items():
@@ -70,8 +125,14 @@ def process_match(match, fmt, players):
         if inn.get("super_over"):
             continue
         bat, bowl, overs = {}, {}, {}
+        tot_runs = tot_wkts = tot_balls = 0   # the innings total, for the match archive
         for over in inn.get("overs", []):
             for d in over.get("deliveries", []):
+                d_ext = d.get("extras", {})
+                tot_runs += d.get("runs", {}).get("total", 0)
+                if "wides" not in d_ext and "noballs" not in d_ext:
+                    tot_balls += 1
+                tot_wkts += sum(1 for k in d.get("wickets", []) if k.get("kind") not in NOT_OUT_KINDS)
                 batter = people.get(d.get("batter"))
                 bowler = people.get(d.get("bowler"))
                 if not batter or not bowler:
@@ -113,6 +174,7 @@ def process_match(match, fmt, players):
                     if kind in BOWLER_WICKETS:
                         w["wkts"] += 1
 
+        rec["i"].append([inn.get("team", ""), tot_runs, tot_wkts, tot_balls, 1 if inn.get("declared") else 0])
         names = {v: k for k, v in people.items()}
         for pid, b in bat.items():
             p = get_player(players, pid, names.get(pid, ""))
@@ -231,60 +293,4 @@ def apply_manual(players):
                 s["hs_no"], s["hs"] = hs.endswith("*"), _int(hs.rstrip("*"))
                 p["bat"][fmt] = s
             w = f.get("bowl")
-            if isinstance(w, dict):
-                s = new_bowl()
-                for k in ("inns", "runs", "wkts", "mdns", "fivers"):
-                    s[k] = _int(w.get(k))
-                if "balls" in w:
-                    s["balls"] = _int(w["balls"])
-                elif "overs" in w:
-                    whole, _, part = str(w["overs"]).partition(".")
-                    s["balls"] = _int(whole) * 6 + _int(part)
-                best = str(w.get("best", "0/0")).split("/")
-                s["best_w"], s["best_r"] = _int(best[0]), (_int(best[1]) if len(best) > 1 else 0)
-                p["bowl"][fmt] = s
-        p["manual"] = True
-
-
-def pack(players):
-    apply_manual(players)
-    names = load_names()
-    out = []
-    for p in players.values():
-        if not p["mat"]:
-            continue
-        short = p["n"]
-        full = names.get(p["id"]) or names.get(short)
-        if full:
-            p["n"] = full.strip()
-        out.append({
-            "id": p["id"], "n": p["n"], "t": p["team"],
-            **({"s": short} if full else {}),
-            **({"x": 1} if p.get("manual") else {}),
-            "m": p["mat"],
-            "bat": {f: [s["inns"], s["runs"], s["balls"], s["outs"], s["hs"], int(s["hs_no"]),
-                        s["fours"], s["sixes"], s["fifties"], s["hundreds"], s["ducks"]]
-                    for f, s in p["bat"].items()},
-            "bowl": {f: [s["inns"], s["balls"], s["runs"], s["wkts"], s["mdns"],
-                         s["best_w"], s["best_r"], s["fivers"]]
-                     for f, s in p["bowl"].items()},
-        })
-    out.sort(key=lambda x: -sum(x["m"].values()))
-    return {
-        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        # column order used by the app
-        "bat_cols": ["inns", "runs", "balls", "outs", "hs", "hs_no", "fours", "sixes", "fifties", "hundreds", "ducks"],
-        "bowl_cols": ["inns", "balls", "runs", "wkts", "mdns", "best_w", "best_r", "fivers"],
-        "players": out,
-    }
-
-
-if __name__ == "__main__":
-    try:
-        result = pack(build())
-    except Exception as e:  # keep the old players.json if anything fails
-        print("Failed:", e, file=sys.stderr)
-        sys.exit(1)
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(result, f, separators=(",", ":"), ensure_ascii=False)
-    print(f"Wrote {OUT_FILE} with {len(result['players'])} players")
+            if
