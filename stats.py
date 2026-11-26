@@ -293,4 +293,84 @@ def apply_manual(players):
                 s["hs_no"], s["hs"] = hs.endswith("*"), _int(hs.rstrip("*"))
                 p["bat"][fmt] = s
             w = f.get("bowl")
-            if
+            if isinstance(w, dict):
+                s = new_bowl()
+                for k in ("inns", "runs", "wkts", "mdns", "fivers"):
+                    s[k] = _int(w.get(k))
+                if "balls" in w:
+                    s["balls"] = _int(w["balls"])
+                elif "overs" in w:
+                    whole, _, part = str(w["overs"]).partition(".")
+                    s["balls"] = _int(whole) * 6 + _int(part)
+                best = str(w.get("best", "0/0")).split("/")
+                s["best_w"], s["best_r"] = _int(best[0]), (_int(best[1]) if len(best) > 1 else 0)
+                p["bowl"][fmt] = s
+        p["manual"] = True
+
+
+def pack(players):
+    apply_manual(players)
+    names = load_names()
+    out = []
+    for p in players.values():
+        if not p["mat"]:
+            continue
+        short = p["n"]
+        full = names.get(p["id"]) or names.get(short)
+        if full:
+            p["n"] = full.strip()
+        out.append({
+            "id": p["id"], "n": p["n"], "t": p["team"],
+            **({"s": short} if full else {}),
+            **({"x": 1} if p.get("manual") else {}),
+            "m": p["mat"],
+            "bat": {f: [s["inns"], s["runs"], s["balls"], s["outs"], s["hs"], int(s["hs_no"]),
+                        s["fours"], s["sixes"], s["fifties"], s["hundreds"], s["ducks"]]
+                    for f, s in p["bat"].items()},
+            "bowl": {f: [s["inns"], s["balls"], s["runs"], s["wkts"], s["mdns"],
+                         s["best_w"], s["best_r"], s["fivers"]]
+                     for f, s in p["bowl"].items()},
+        })
+    out.sort(key=lambda x: -sum(x["m"].values()))
+    return {
+        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        # column order used by the app
+        "bat_cols": ["inns", "runs", "balls", "outs", "hs", "hs_no", "fours", "sixes", "fifties", "hundreds", "ducks"],
+        "bowl_cols": ["inns", "balls", "runs", "wkts", "mdns", "best_w", "best_r", "fivers"],
+        "coverage": COVERAGE,
+        "players": out,
+    }
+
+
+def write_matches(outdir=None):
+    """Saves matches/<year>.json for every year, plus matches/index.json (how many matches each year has)."""
+    outdir = outdir or MATCH_DIR
+    os.makedirs(outdir, exist_ok=True)
+    years = {}
+    for m in MATCHES:
+        years.setdefault((m["d"] or "0000")[:4], []).append(m)
+    index = {}
+    for y, ms in years.items():
+        ms.sort(key=lambda m: m["d"])
+        with open(os.path.join(outdir, f"{y}.json"), "w", encoding="utf-8") as f:
+            json.dump({"year": y, "matches": ms}, f, separators=(",", ":"), ensure_ascii=False)
+        counts = {}
+        for m in ms:
+            counts[m["f"]] = counts.get(m["f"], 0) + 1
+        index[y] = counts
+    with open(os.path.join(outdir, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({"updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "years": index}, f, separators=(",", ":"))
+    return index
+
+
+if __name__ == "__main__":
+    try:
+        result = pack(build())
+    except Exception as e:  # keep the old players.json if anything fails
+        print("Failed:", e, file=sys.stderr)
+        sys.exit(1)
+    with open(OUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(result, f, separators=(",", ":"), ensure_ascii=False)
+    print(f"Wrote {OUT_FILE} with {len(result['players'])} players")
+    years = write_matches()
+    print(f"Wrote {len(years)} match files in {MATCH_DIR}/ ({len(MATCHES)} matches)")
