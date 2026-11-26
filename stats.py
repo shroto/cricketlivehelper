@@ -22,6 +22,7 @@ SOURCES = {
 OUT_FILE = "players.json"
 MATCHES = []    # one short record for every match, saved by year in the matches/ folder
 MATCH_DIR = "matches"
+SCORECARDS = {}  # per year: scorecards and playing XIs, saved as matches/<year>-sc.json (only loaded when someone opens a scoreboard)
 COVERAGE = {}   # per format: how many matches were read, and the first and last match dates
 MANUAL_FILE = "manual_stats.json"   # career totals you type in by hand
 NAMES_FILE = "names.json"   # your own corrections, e.g. "V Kohli": "Virat Kohli"
@@ -78,6 +79,25 @@ def result_text(info):
     return res or ""
 
 
+def dismissal_text(kind, bowler, fielders):
+    """How a batter got out, in cricket scorecard style: "c Smith b Jones", "b Jones", "lbw b Jones"."""
+    f = (fielders[0].get("name", "") if fielders else "").split(" ")[-1]
+    b = (bowler or "").split(" ")[-1]
+    if kind == "caught":
+        return f"c {f} b {b}" if f and f != b else f"c & b {b}"
+    if kind == "bowled":
+        return f"b {b}"
+    if kind == "lbw":
+        return f"lbw b {b}"
+    if kind == "stumped":
+        return f"st {f} b {b}"
+    if kind == "run out":
+        return f"run out ({f})" if f else "run out"
+    if kind == "caught and bowled":
+        return f"c & b {b}"
+    return kind
+
+
 def process_match(match, fmt, players):
     info = match.get("info", {})
     people = info.get("registry", {}).get("people", {})
@@ -105,6 +125,7 @@ def process_match(match, fmt, players):
     if toss.get("winner"):
         rec["o"] = f"{toss['winner']} won the toss and chose to {toss.get('decision', 'bat')}"
     MATCHES.append(rec)
+    sc_inns = []
 
     # Matches played
     for team, names in info.get("players", {}).items():
@@ -124,7 +145,7 @@ def process_match(match, fmt, players):
     for inn in match.get("innings", []):
         if inn.get("super_over"):
             continue
-        bat, bowl, overs = {}, {}, {}
+        bat, bowl, overs, dism = {}, {}, {}, {}
         tot_runs = tot_wkts = tot_balls = 0   # the innings total, for the match archive
         for over in inn.get("overs", []):
             for d in over.get("deliveries", []):
@@ -171,11 +192,20 @@ def process_match(match, fmt, players):
                         o = bat.setdefault(out_id, {"runs": 0, "balls": 0, "fours": 0, "sixes": 0, "out": False})
                         if kind not in NOT_OUT_KINDS:
                             o["out"] = True
+                            dism[out_id] = dismissal_text(kind, d.get("bowler", ""), wk.get("fielders", []))
                     if kind in BOWLER_WICKETS:
                         w["wkts"] += 1
 
         rec["i"].append([inn.get("team", ""), tot_runs, tot_wkts, tot_balls, 1 if inn.get("declared") else 0])
         names = {v: k for k, v in people.items()}
+        sc_bat = [[names.get(pid, ""), b["runs"], b["balls"], b["fours"], b["sixes"], dism.get(pid, "not out" if b["balls"] or b["runs"] else "")] for pid, b in bat.items()]
+        sc_bowl = []
+        for pid, w in bowl.items():
+            if w["balls"] == 0 and w["runs"] == 0:
+                continue
+            mdn = sum(1 for (bid, _), (r, n) in overs.items() if bid == pid and n >= 6 and r == 0)
+            sc_bowl.append([names.get(pid, ""), w["balls"], mdn, w["runs"], w["wkts"]])
+        sc_inns.append([inn.get("team", ""), sc_bat, sc_bowl])
         for pid, b in bat.items():
             p = get_player(players, pid, names.get(pid, ""))
             s = p["bat"].setdefault(fmt, new_bat())
@@ -209,6 +239,10 @@ def process_match(match, fmt, players):
                 s["best_w"], s["best_r"] = w["wkts"], w["runs"]
             if w["wkts"] >= 5:
                 s["fivers"] += 1
+
+    if date:
+        key = "|".join([date] + sorted(rec["t"]) + [fmt])
+        SCORECARDS.setdefault(date[:4], {})[key] = {"i": sc_inns, "x": info.get("players", {})}
 
 
 def download(url):
@@ -358,6 +392,9 @@ def write_matches(outdir=None):
         for m in ms:
             counts[m["f"]] = counts.get(m["f"], 0) + 1
         index[y] = counts
+    for y, sc in SCORECARDS.items():
+        with open(os.path.join(outdir, f"{y}-sc.json"), "w", encoding="utf-8") as f:
+            json.dump(sc, f, separators=(",", ":"), ensure_ascii=False)
     with open(os.path.join(outdir, "index.json"), "w", encoding="utf-8") as f:
         json.dump({"updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "years": index}, f, separators=(",", ":"))
     return index
